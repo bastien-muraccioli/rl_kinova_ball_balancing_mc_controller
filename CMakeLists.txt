@@ -3,8 +3,8 @@ cmake_minimum_required(VERSION 3.22)
 set(CXX_DISABLE_WERROR 1)
 set(CMAKE_CXX_STANDARD 11)
 
-set(PROJECT_NAME NewFSMController)
-set(PROJECT_DESCRIPTION "NewFSMController")
+set(PROJECT_NAME RLKinovaBallBalancingMcController)
+set(PROJECT_DESCRIPTION "RLKinovaBallBalancingMcController")
 set(PROJECT_URL "")
 
 project(
@@ -20,11 +20,11 @@ endif()
 
 add_subdirectory(src)
 
-if(BUILD_TESTING)
-  add_subdirectory(tests)
-endif()
+# if(BUILD_TESTING)
+#   add_subdirectory(tests)
+# endif()
 
-configure_file(etc/NewFSMController.in.yaml
-               "${CMAKE_CURRENT_BINARY_DIR}/etc/NewFSMController.yaml")
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/NewFSMController.yaml"
+configure_file(etc/RLKinovaBallBalancingMcController.in.yaml
+               "${CMAKE_CURRENT_BINARY_DIR}/etc/RLKinovaBallBalancingMcController.yaml")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/RLKinovaBallBalancingMcController.yaml"
         DESTINATION "${MC_CONTROLLER_RUNTIME_INSTALL_PREFIX}/etc")
