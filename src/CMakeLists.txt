@@ -1,6 +1,28 @@
-set(controller_SRC RLKinovaBallBalancingMcController.cpp)
+# ---- ONNX Runtime (local vendored copy) ----
+set(ONNXRUNTIME_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/onnxruntime)
+set(ONNXRUNTIME_INCLUDE_DIR ${ONNXRUNTIME_ROOT}/include)
+set(ONNXRUNTIME_LIB_DIR ${ONNXRUNTIME_ROOT}/lib)
 
-set(controller_HDR RLKinovaBallBalancingMcController.h)
+find_library(ONNXRUNTIME_LIB
+  NAMES onnxruntime
+  PATHS ${ONNXRUNTIME_LIB_DIR}
+  NO_DEFAULT_PATH
+  REQUIRED
+)
+
+set(controller_SRC 
+  RLKinovaBallBalancingMcController.cpp
+  RLPolicyInterface.cpp
+  utils.cpp
+  PolicySimulatorHandling.cpp
+)
+
+set(controller_HDR 
+  RLKinovaBallBalancingMcController.h
+  RLPolicyInterface.h
+  utils.h
+  PolicySimulatorHandling.h
+)
 
 add_library(${PROJECT_NAME} SHARED ${controller_SRC} ${controller_HDR})
 set_target_properties(${PROJECT_NAME} PROPERTIES COMPILE_FLAGS
@@ -11,6 +33,13 @@ install(
   ARCHIVE DESTINATION "${MC_RTC_LIBDIR}"
   LIBRARY DESTINATION "${MC_RTC_LIBDIR}"
   RUNTIME DESTINATION bin)
+
+install(
+  DIRECTORY ${ONNXRUNTIME_LIB_DIR}/
+  DESTINATION ${MC_RTC_LIBDIR}
+  FILES_MATCHING
+    PATTERN "libonnxruntime*.so*"
+)
 
 add_controller(${PROJECT_NAME}_controller lib.cpp "")
 target_link_libraries(${PROJECT_NAME}_controller PUBLIC ${PROJECT_NAME})
