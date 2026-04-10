@@ -20,35 +20,23 @@ VerboseStateFactory: false
 robots:
   ground:
     module: env/ground
-# General constraints, always on
-constraints:
-- type: contact
-- type: dynamics
-  damper: [0.1, 0.01, 0.5]
-- type: compoundJoint
+
 # Collision constraint
 collisions:
 - type: collision
   useMinimal: true
-# Initial set of contacts
-contacts:
-- r1: jvrc1
-  r2: ground
-  r1Surface: LeftFoot
-  r2Surface: AllGround
-- r1: jvrc1
-  r2: ground
-  r1Surface: RightFoot
-  r2Surface: AllGround
 
-# Some options for a specific robot
-jvrc1:
-  posture:
-    stiffness: 1
-    weight: 10
-  ff:
-    stiffness: 2
-    weight: 100
+ObserverPipelines:
+  name: MainPipeline
+  gui: true
+  log: true
+
+  observers:
+    - type: Encoder
+      config:
+          velocity: encoderVelocities
+
+
 # Implement some additional text states
 states: {}
 # Transitions map
@@ -56,3 +44,40 @@ transitions:
 - [RLKinovaBallBalancingMcController_Initial, OK, RLKinovaBallBalancingMcController_Initial, Strict]
 # Initial state
 init: RLKinovaBallBalancingMcController_Initial
+
+policy_path: ["v0-2026-04-09.onnx"]  # Path to the RL policy file(s)
+default_policy_index: 0 # Index of the default policy to use
+policies:
+  # index 0 :
+  - is_torque_control: true
+    use_QP: false
+    action_scale: 0.13
+    policy_step_size: 0.01 # Policy step size in seconds
+    physics_step_size: 0.001 # Physics step size in seconds
+    pd_gains_ratio: 1.0
+    kp:
+      joint_1: 40.0
+      joint_2: 40.0
+      joint_3: 40.0
+      joint_4: 40.0
+      joint_5: 15.0
+      joint_6: 15.0
+      joint_7: 15.0
+
+    kd:
+      joint_1: 15.0
+      joint_2: 15.0
+      joint_3: 15.0
+      joint_4: 15.0
+      joint_5: 8.5
+      joint_6: 8.5
+      joint_7: 8.5
+    
+    q0:
+      joint_1: 0.0
+      joint_2: 0.2618
+      joint_3: 3.14
+      joint_4: -2.269
+      joint_5: 0.0
+      joint_6: 0.9599
+      joint_7: 1.57

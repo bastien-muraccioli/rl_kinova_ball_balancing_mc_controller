@@ -10,7 +10,6 @@ struct utils
 
     // mc_rtc - RL policy interface
     Eigen::VectorXd getCurrentObservation(mc_control::fsm::Controller & ctl_);
-    void applyAction(mc_control::fsm::Controller & ctl_, const Eigen::VectorXd & action);
 
     private:
         std::string state_name_;
