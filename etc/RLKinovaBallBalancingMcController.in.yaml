@@ -27,14 +27,11 @@ collisions:
   useMinimal: true
 
 ObserverPipelines:
-  name: MainPipeline
-  gui: true
-  log: true
-
+- name: Pipeline
   observers:
     - type: Encoder
       config:
-          velocity: encoderVelocities
+        velocity: encoderVelocities
 
 
 # Implement some additional text states
@@ -42,6 +39,8 @@ states: {}
 # Transitions map
 transitions:
 - [RLKinovaBallBalancingMcController_Initial, OK, RLKinovaBallBalancingMcController_Initial, Strict]
+- [RLKinovaBallBalancingMcController_Initial, Start, RLKinovaBallBalancingMcController_RL, Strict]
+- [RLKinovaBallBalancingMcController_RL, OK, RLKinovaBallBalancingMcController_Initial, Strict]
 # Initial state
 init: RLKinovaBallBalancingMcController_Initial
 
@@ -50,7 +49,7 @@ default_policy_index: 0 # Index of the default policy to use
 policies:
   # index 0 :
   - is_torque_control: true
-    use_QP: false
+    use_QP: true
     action_scale: 0.13
     policy_step_size: 0.01 # Policy step size in seconds
     physics_step_size: 0.001 # Physics step size in seconds

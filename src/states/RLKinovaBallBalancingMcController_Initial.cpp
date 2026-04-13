@@ -11,7 +11,6 @@ void RLKinovaBallBalancingMcController_Initial::start(mc_control::fsm::Controlle
     ctl.datastore().call("EF_Estimator::toggleActive");
   }
   ctl.utilsClass.start_rl_state(ctl, "RL_State");
-  ctl.solver().addTask(ctl.torqueJointTask);
 }
 
 bool RLKinovaBallBalancingMcController_Initial::run(mc_control::fsm::Controller & ctl_)
@@ -25,7 +24,6 @@ bool RLKinovaBallBalancingMcController_Initial::run(mc_control::fsm::Controller 
 void RLKinovaBallBalancingMcController_Initial::teardown(mc_control::fsm::Controller & ctl_)
 {
   auto & ctl = static_cast<RLKinovaBallBalancingMcController &>(ctl_);
-  ctl.solver().removeTask(ctl.torqueJointTask);
   ctl.utilsClass.teardown_rl_state(ctl);
 }
 

@@ -8,11 +8,28 @@ RLKinovaBallBalancingMcController::RLKinovaBallBalancingMcController(mc_rbdyn::R
 {
   config_ = config;
   currentPolicyIndex = size_t(config_("default_policy_index", 0));
+  //Initialize Constraints
+  selfCollisionConstraint->setCollisionsDampers(solver(), {1.2, 9.0});
+  solver().removeConstraintSet(dynamicsConstraint);
+  dynamicsConstraint = mc_rtc::unique_ptr<mc_solver::DynamicsConstraint>(
+    new mc_solver::DynamicsConstraint(robots(), 0, {diPercent_, dsPercent_, 0.0, 1.9, 70.0}, velPercent_, true));
+  solver().addConstraintSet(dynamicsConstraint);
+  // Remove the default posture task created by the FSM
+  solver().removeTask(getPostureTask(robot().name()));
+  // Initialize Task
+  torqueJointTask = std::make_shared<mc_tasks::TorqueJointTask>(
+      solver(), robot().robotIndex(), 100.0, 1);
+  solver().addTask(torqueJointTask);
+
   initializeRobot();
   initializeRLPolicy();
 
   addGui();
   addLog();
+
+  // Kinova Dependant -----
+  datastore().make<std::string>("TorqueMode", "Custom");
+  datastore().make_call("getPostureTask", [this]() -> mc_tasks::PostureTaskPtr { return postureTask; });
   mc_rtc::log::success("RLKinovaBallBalancingMcController init done");
 }
 
@@ -37,12 +54,12 @@ void RLKinovaBallBalancingMcController::initializeRobot()
   isTorqueControl_ = config_("policies")[currentPolicyIndex]("is_torque_control", false);
   if(isTorqueControl_)
   {
-    mc_rtc::log::info("Using Torque Control mode");
+    mc_rtc::log::info("[RLKinovaBallBalancingMcController] Using Torque Control mode");
     datastore().make<std::string>("ControlMode", "Torque");
   }
   else
   {
-    mc_rtc::log::info("Using Position Control mode");
+    mc_rtc::log::info("[RLKinovaBallBalancingMcController] Using Position Control mode");
     datastore().make<std::string>("ControlMode", "Position");
   }
 
@@ -67,7 +84,8 @@ void RLKinovaBallBalancingMcController::initializeRobot()
   std::map<std::string, double> q0_map = config_("policies")[currentPolicyIndex]("q0");
   
   // Get the default posture target from the robot's posture task
-  auto posture = postureTask->posture();
+  std::shared_ptr<mc_tasks::PostureTask> FSMPostureTask = getPostureTask(robot().name());
+  auto posture = FSMPostureTask->posture();
   int i = 0;
   std::vector<std::string> joint_names;
   joint_names.reserve(robot().mb().joints().size());
@@ -88,29 +106,10 @@ void RLKinovaBallBalancingMcController::initializeRobot()
       }
   }
 
-  //Initialize Constraints
-  selfCollisionConstraint->setCollisionsDampers(solver(), {1.2, 20.0});
-  solver().removeConstraintSet(dynamicsConstraint);
-  dynamicsConstraint = mc_rtc::unique_ptr<mc_solver::DynamicsConstraint>(
-    new mc_solver::DynamicsConstraint(robots(), 0, {diPercent_, dsPercent_, 0.0, 1.2, 100.0}, velPercent_, true));
-  solver().addConstraintSet(dynamicsConstraint);
-
-  // Initialize Task
-  torqueJointTask = std::make_shared<mc_tasks::TorqueJointTask>(
-      solver(), robot().robotIndex(), 100.0, 1);
-
   kp_ = pdGainsRatio_ * kpBase_;
   kd_ = pdGainsRatio_ * kdBase_;
   torqueJointTask->setStiffness(kp_);
   torqueJointTask->setDamping(kd_);
-  torqueJointTask->setPosTarget(q_rl);
-
-  // Kinova Dependant -----
-  datastore().make<std::string>("TorqueMode", "Custom");
-  datastore().make_call("getPostureTask", [this]() -> mc_tasks::PostureTaskPtr { return postureTask; });
-  // ----------------------
-
-  solver().removeTask(postureTask);
 }
 
 void RLKinovaBallBalancingMcController::initializeRLPolicy()
