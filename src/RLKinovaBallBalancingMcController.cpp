@@ -1,7 +1,9 @@
 #include "RLKinovaBallBalancingMcController.h"
 
 #include <RBDyn/MultiBodyConfig.h>
-#include <numeric>
+#include <Eigen/src/Core/Matrix.h>
+
+#include <mc_rtc/gui/Transform.h>
 
 RLKinovaBallBalancingMcController::RLKinovaBallBalancingMcController(mc_rbdyn::RobotModulePtr rm, double dt, const mc_rtc::Configuration & config)
 : mc_control::fsm::Controller(rm, dt, config, Backend::TVM)
@@ -76,9 +78,15 @@ void RLKinovaBallBalancingMcController::initializeRobot()
   kd_ = Eigen::VectorXd::Zero(dofNumber);
   kpBase_ = Eigen::VectorXd::Zero(dofNumber);
   kdBase_ = Eigen::VectorXd::Zero(dofNumber);
+
+  actionScale = Eigen::VectorXd::Zero(dofNumber);
+  currentActionScaled = Eigen::VectorXd::Zero(dofNumber);
+
+  jointNames_ = robot().refJointOrder();
   
   // Get the gains from the configuration or set default values
   pdGainsRatio_ = config_("policies")[currentPolicyIndex]("pd_gains_ratio", 1.0);
+  std::map<std::string, double> actionScale_map = config_("policies")[currentPolicyIndex]("action_scale");
   std::map<std::string, double> kp_map = config_("policies")[currentPolicyIndex]("kp");
   std::map<std::string, double> kd_map = config_("policies")[currentPolicyIndex]("kd");
   std::map<std::string, double> q0_map = config_("policies")[currentPolicyIndex]("q0");
@@ -87,27 +95,21 @@ void RLKinovaBallBalancingMcController::initializeRobot()
   std::shared_ptr<mc_tasks::PostureTask> FSMPostureTask = getPostureTask(robot().name());
   auto posture = FSMPostureTask->posture();
   int i = 0;
-  std::vector<std::string> joint_names;
-  joint_names.reserve(robot().mb().joints().size());
-  
-  for (const auto &j : robot().mb().joints()) {
-      const std::string &joint_name = j.name();
-      if(j.type() == rbd::Joint::Type::Rev)
-      {
-        jointNames_.emplace_back(joint_name);  
-        mc_rtc::log::info("[RLKinovaBallBalancingMcController] Found joint: {}", joint_name);
-        if (const auto &t = posture[robot().jointIndexByName(joint_name)]; !t.empty()) {
-            kpBase_[i] = kp_map.at(joint_name);
-            kdBase_[i] = kd_map.at(joint_name);
-            q_zero[i] = q0_map.at(joint_name);
-            q_rl[i] = t[0];
-            i++;
-        }
-      }
+  for (const auto &joint_name : jointNames_)
+  {
+    mc_rtc::log::info("[RLKinovaBallBalancingMcController] Found joint: {}", joint_name);
+    if (const auto &t = posture[robot().jointIndexByName(joint_name)]; !t.empty()) {
+        kpBase_[i] = kp_map.at(joint_name);
+        kdBase_[i] = kd_map.at(joint_name);
+        q_zero[i] = q0_map.at(joint_name);
+        q_rl[i] = t[0];
+        actionScale[i] = actionScale_map.at(joint_name);
+        i++;
+    }
   }
 
   kp_ = pdGainsRatio_ * kpBase_;
-  kd_ = pdGainsRatio_ * kdBase_;
+  kd_ = sqrt(pdGainsRatio_) * kdBase_;
   torqueJointTask->setStiffness(kp_);
   torqueJointTask->setDamping(kd_);
 }
@@ -117,18 +119,87 @@ void RLKinovaBallBalancingMcController::initializeRLPolicy()
   // load policy specific configuration
   policyPaths_ = config_("policy_path", std::vector<std::string>{"walking_better_h1.onnx"});
   configRL();
+  currentObservation = Eigen::VectorXd::Zero(rlPolicy->getObservationSize());
+  currentAction = Eigen::VectorXd::Zero(rlPolicy->getActionSize());
+
   auto & real_robot = realRobot(robots()[0].name());
+  sensorBias_ = Eigen::Vector6d::Zero();
+  auto wrench = real_robot.forceSensor("EEForceSensor").wrench();
+  sensorBias_.head<3>() = wrench.force();
+  sensorBias_.tail<3>() = wrench.couple();
 
-  // Observation
-  jointPos = Eigen::VectorXd::Zero(dofNumber);
-  jointVel = Eigen::VectorXd::Zero(dofNumber);
-  
-  eePos = Eigen::Vector3d::Zero();
-  eeVel = Eigen::Vector3d::Zero();
-  eeWrench = Eigen::Vector6d::Zero();
+  mc_rtc::log::info("[RLKinovaBallBalancingMcController] Sensor bias for EEForceSensor: {}", sensorBias_.transpose());
 
-  // Action
-  currentAction = Eigen::VectorXd::Zero(dofNumber);
+  initializeRLObservation();
+
+  for (int i = 0; i < HISTORY_SIZE; ++i) {
+    jointPos[i] = jointPos[0]; 
+    jointVel[i] = jointVel[0];
+    jointAction[i] = jointAction[0];
+    eePos[i] = eePos[0];
+    eeQuat[i] = eeQuat[0];
+    eeLinVel[i] = eeLinVel[0];
+    eeAngVel[i] = eeAngVel[0];
+    eeWrench[i] = eeWrench[0];
+  }
+}
+
+void RLKinovaBallBalancingMcController::initializeRLObservation()
+{ 
+  auto & real_robot = realRobot(robots()[0].name());
+  Eigen::VectorXd q = Eigen::VectorXd::Zero(dofNumber);
+  Eigen::VectorXd q_dot = Eigen::VectorXd::Zero(dofNumber);
+  const auto & q_mbc = real_robot.mbc().q;
+  const auto & q_dot_mbc = real_robot.mbc().alpha;
+  size_t i = 0;
+  for(const auto &joint_name : jointNames_)
+  {
+    size_t mbcIndex = real_robot.mb().jointIndexByName(joint_name);
+    if(mbcIndex >= q_mbc.size() || mbcIndex >= q_dot_mbc.size())
+    {
+      mc_rtc::log::error("Joint '{}' not found in the robot's MBC. Skipping.", joint_name);
+      continue;
+    }
+    if(q_mbc[mbcIndex].empty()) { continue; }
+
+    q[i] = q_mbc[mbcIndex][0];
+    q_dot[i] = q_dot_mbc[mbcIndex][0];
+    i++;
+  }
+
+  sva::PTransformd eePosW = real_robot.bodyPosW(controlFrameName);
+  Eigen::Vector3d eeCurrentPosition = eePosW.translation();
+
+  Eigen::Vector3d eeCurrentLinearVel = real_robot.bodyVelW(controlFrameName).linear();
+  Eigen::Vector3d eeCurrentAngularVel = real_robot.bodyVelW(controlFrameName).angular();
+
+  Eigen::Vector4d eeCurrentOrientation = Eigen::Vector4d::Zero();
+  Eigen::Quaterniond quat = Eigen::Quaterniond(eePosW.rotation().transpose()).normalized();
+  eeCurrentOrientation << quat.w(), quat.x(), quat.y(), quat.z();
+
+  // sva::ForceVecd wrench = real_robot.forceSensor("EEForceSensor").wrenchWithoutGravity(real_robot);
+  sva::ForceVecd wrench = real_robot.forceSensor("EEForceSensor").wrench();
+  Eigen::Vector6d eeCurrentWrench = Eigen::Vector6d::Zero();
+  eeCurrentWrench.head<3>() = wrench.force();
+  eeCurrentWrench.tail<3>() = wrench.couple();
+
+  jointPos[0] = q - q_zero;
+  jointVel[0] = q_dot;
+  jointAction[0] = currentAction;
+  eePos[0] = eeCurrentPosition;
+  eeQuat[0] = eeCurrentOrientation;
+  eeLinVel[0] = eeCurrentLinearVel;
+  eeAngVel[0] = eeCurrentAngularVel;
+  eeWrench[0] = eeCurrentWrench;// - sensorBias_;
+
+  mc_rtc::log::info("jointPos[0]: {}", jointPos[0].transpose());
+  mc_rtc::log::info("jointVel[0]: {}", jointVel[0].transpose());
+  mc_rtc::log::info("jointAction[0]: {}", jointAction[0].transpose());
+  mc_rtc::log::info("eePos[0]: {}", eePos[0].transpose());
+  mc_rtc::log::info("eeQuat[0]: {}", eeQuat[0].transpose());
+  mc_rtc::log::info("eeLinVel[0]: {}", eeLinVel[0].transpose());
+  mc_rtc::log::info("eeAngVel[0]: {}", eeAngVel[0].transpose());
+  mc_rtc::log::info("eeWrench[0]: {}", eeWrench[0].transpose());
 }
 
 void RLKinovaBallBalancingMcController::switchPolicy(int policyIndex)
@@ -154,6 +225,7 @@ void RLKinovaBallBalancingMcController::switchPolicy(int policyIndex)
   std::map<std::string, double> kp_map = config_("policies")[currentPolicyIndex]("kp");
   std::map<std::string, double> kd_map = config_("policies")[currentPolicyIndex]("kd");
   std::map<std::string, double> q0_map = config_("policies")[currentPolicyIndex]("q0");
+  std::map<std::string, double> actionScale_map = config_("policies")[currentPolicyIndex]("action_scale");
 
   for(int i = 0; i < dofNumber; ++i) {
     const auto & jName = robot().mb().joint(static_cast<int>(i + 1)).name();  // +1 to skip Root
@@ -166,10 +238,13 @@ void RLKinovaBallBalancingMcController::switchPolicy(int policyIndex)
     if(q0_map.count(jName)) {
       q_zero[i] = q0_map[jName];
     }
+    if(actionScale_map.count(jName)) {
+      actionScale[i] = actionScale_map[jName];
+    }
   }
   // Update PD gains
   kp_ = pdGainsRatio_ * kpBase_;
-  kd_ = pdGainsRatio_ * kdBase_;
+  kd_ = sqrt(pdGainsRatio_) * kdBase_;
   torqueJointTask->setStiffness(kp_);
   torqueJointTask->setDamping(kd_);
 }
@@ -226,10 +301,14 @@ void RLKinovaBallBalancingMcController::addLog()
   logger().addLogEntry("RLKinovaBallBalancingMcController_useQP", [this]() { return useQP_; });
   logger().addLogEntry("RLKinovaBallBalancingMcController_isTorqueControl", [this]() { return isTorqueControl_; });
 
-  // Log current policy (combined index and path)
-  logger().addLogEntry("RLKinovaBallBalancingMcController_currentPolicy", [this]() { 
-    return std::to_string(currentPolicyIndex) + ": " + policyPaths_[currentPolicyIndex]; 
-  });
+  // Log observation
+  for (int i = 0; i < HISTORY_SIZE; ++i) {
+    logger().addLogEntry("RLKinovaBallBalancingMcController_eePos_" + std::to_string(i), [this, i]() { return eePos[i]; });
+    logger().addLogEntry("RLKinovaBallBalancingMcController_eeLinVel_" + std::to_string(i), [this, i]() { return eeLinVel[i]; });
+    logger().addLogEntry("RLKinovaBallBalancingMcController_eeAngVel_" + std::to_string(i), [this, i]() { return eeAngVel[i]; });
+    logger().addLogEntry("RLKinovaBallBalancingMcController_eeQuat_" + std::to_string(i), [this, i]() { return eeQuat[i]; });
+    logger().addLogEntry("RLKinovaBallBalancingMcController_eeWrench_" + std::to_string(i), [this, i]() { return eeWrench[i]; });
+  }
 }
 
 void RLKinovaBallBalancingMcController::addGui()
@@ -272,7 +351,7 @@ void RLKinovaBallBalancingMcController::addGui()
       [this](double v) { 
         pdGainsRatio_ = v;
         kp_ = pdGainsRatio_ * kpBase_;
-        kd_ = pdGainsRatio_ * kdBase_;
+        kd_ = sqrt(pdGainsRatio_) * kdBase_;
         torqueJointTask->setStiffness(kp_);
         torqueJointTask->setDamping(kd_);
       }, 0.0, 2.0),
@@ -311,14 +390,14 @@ void RLKinovaBallBalancingMcController::configRL()
       // Initialize observation vector with the correct size from the loaded policy
       currentObservation = Eigen::VectorXd::Zero(rlPolicy->getObservationSize());
       mc_rtc::log::info("Initialized observation vector with size: {}", rlPolicy->getObservationSize());
+      currentAction = Eigen::VectorXd::Zero(rlPolicy->getActionSize());
+      mc_rtc::log::info("Initialized action vector with size: {}", rlPolicy->getActionSize());
     } else {
       mc_rtc::log::error_and_throw("RL policy creation failed - policy is null");
     }
   } catch(const std::exception& e) {
     mc_rtc::log::error_and_throw("Failed to load RL policy: {}", e.what());
   }
-
-  actionScale = config_("policies")[currentPolicyIndex]("action_scale", 1.0);
   policyStepSize = config_("policies")[currentPolicyIndex]("policy_step_size", 0.01);
 
   int physicsStepSize = config_("policies")[currentPolicyIndex]("physics_step_size", 0.001);

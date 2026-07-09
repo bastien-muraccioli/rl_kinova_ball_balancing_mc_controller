@@ -1,6 +1,7 @@
 #include "utils.h"
 #include <Eigen/src/Core/Matrix.h>
 #include <mc_rtc/logging.h>
+#include <SpaceVecAlg/SpaceVecAlg>
 
 #include "RLKinovaBallBalancingMcController.h"
 
@@ -11,6 +12,8 @@ void utils::start_rl_state(mc_control::fsm::Controller & ctl_, std::string state
   mc_rtc::log::info("{} state started", state_name);
 
   syncTime_ = ctl.policyStepSize;
+
+  ctl.initializeRLObservation();
     
   if(!ctl.rlPolicy || !ctl.rlPolicy->isLoaded())
   {
@@ -40,13 +43,13 @@ void utils::run_rl_state(mc_control::fsm::Controller & ctl_)
   try
   {
     syncTime_ += ctl.timeStep;
-    syncPhase_ += ctl.timeStep;
     if(syncTime_ >= ctl.policyStepSize)
     {
       ctl.currentObservation = getCurrentObservation(ctl);
-      ctl.currentAction = ctl.rlPolicy->predict(ctl.currentObservation)*ctl.actionScale;
+      ctl.currentAction = ctl.rlPolicy->predict(ctl.currentObservation);
+      ctl.currentActionScaled = ctl.actionScale.cwiseProduct(ctl.currentAction);
       // Run new inference and update target position, scaled by action scale
-      ctl.q_rl = ctl.q_zero + ctl.currentAction;
+      ctl.q_rl = ctl.q_zero + ctl.currentActionScaled;
       syncTime_ = 0.0;
     }
   }
@@ -64,27 +67,37 @@ void utils::teardown_rl_state(mc_control::fsm::Controller & ctl_)
 Eigen::VectorXd utils::getCurrentObservation(mc_control::fsm::Controller & ctl_)
 {
   auto & ctl = static_cast<RLKinovaBallBalancingMcController&>(ctl_);
-  Eigen::VectorXd obs(ctl.rlPolicy->getObservationSize());
-  obs = Eigen::VectorXd::Zero(ctl.rlPolicy->getObservationSize());
+  Eigen::VectorXd obs = Eigen::VectorXd::Zero(ctl.rlPolicy->getObservationSize());
 
-  auto & real_robot = ctl.realRobot(ctl.robots()[0].name());
-  auto q_map = real_robot.encoderValues();
-  auto q_dot_map = real_robot.encoderVelocities();
-  ctl.jointPos = Eigen::VectorXd::Map(q_map.data(), int(q_map.size())).tail(ctl.dofNumber);
-  ctl.jointVel = Eigen::VectorXd::Map(q_dot_map.data(), int(q_dot_map.size())).tail(ctl.dofNumber);
-
-  ctl.eePos = ctl.robot().mbc().bodyPosW[ctl.robot().bodyIndexByName(ctl.controlFrameName)].translation();
-  ctl.eeVel = ctl.robot().bodyVelW(ctl.controlFrameName).linear();
-  ctl.eeWrench = real_robot.forceSensor("EEForceSensor").wrenchWithoutGravity(real_robot).vector();
+  int offset = 0;
+  auto append = [&](const Eigen::VectorXd& v) {
+    obs.segment(offset, v.size()) = v;
+    offset += v.size();
+  };
 
   switch (ctl.currentPolicyIndex) {
     case 0:
     {
-      obs.segment(0, 7) = ctl.jointPos;
-      obs.segment(7, 7) = ctl.jointVel;
-      obs.segment(14, 3) = ctl.eePos;
-      obs.segment(17, 3) = ctl.eeVel;
-      obs.segment(20, 6) = ctl.eeWrench;
+      for (int i = ctl.HISTORY_SIZE - 1; i > 0; --i) {
+          ctl.jointVel[i] = ctl.jointVel[i - 1];
+          ctl.jointPos[i] = ctl.jointPos[i - 1];
+          ctl.jointAction[i] = ctl.jointAction[i - 1];
+          ctl.eePos[i] = ctl.eePos[i - 1];
+          ctl.eeQuat[i] = ctl.eeQuat[i - 1];
+          ctl.eeLinVel[i] = ctl.eeLinVel[i - 1];
+          ctl.eeAngVel[i] = ctl.eeAngVel[i - 1];
+          ctl.eeWrench[i] = ctl.eeWrench[i - 1];
+      }
+      ctl.initializeRLObservation();
+      for (int i = ctl.HISTORY_SIZE - 1; i >= 0; --i) append(ctl.jointPos[i]);
+      for (int i = ctl.HISTORY_SIZE - 1; i >= 0; --i) append(ctl.jointVel[i]);
+      for (int i = ctl.HISTORY_SIZE - 1; i >= 0; --i) append(ctl.eePos[i]);
+      for (int i = ctl.HISTORY_SIZE - 1; i >= 0; --i) append(ctl.eeQuat[i]);
+      for (int i = ctl.HISTORY_SIZE - 1; i >= 0; --i) append(ctl.eeLinVel[i]);
+      for (int i = ctl.HISTORY_SIZE - 1; i >= 0; --i) append(ctl.eeAngVel[i]);
+      for (int i = ctl.HISTORY_SIZE - 1; i >= 0; --i) append(ctl.eeWrench[i]);
+      for (int i = ctl.HISTORY_SIZE - 1; i >= 0; --i) append(ctl.jointAction[i]);
+
       break;
     }
     default:

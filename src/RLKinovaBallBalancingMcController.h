@@ -8,6 +8,7 @@
 #include "RLPolicyInterface.h"
 #include "utils.h"
 #include <string>
+#include <vector>
 
 struct RLKinovaBallBalancingMcController_DLLAPI RLKinovaBallBalancingMcController : public mc_control::fsm::Controller
 {
@@ -15,6 +16,7 @@ struct RLKinovaBallBalancingMcController_DLLAPI RLKinovaBallBalancingMcControlle
 
   bool run() override;
   void reset(const mc_control::ControllerResetData & reset_data) override;
+  void initializeRLObservation();
 
   // Task
   std::shared_ptr<mc_tasks::TorqueJointTask> torqueJointTask;
@@ -24,23 +26,38 @@ struct RLKinovaBallBalancingMcController_DLLAPI RLKinovaBallBalancingMcControlle
   // Public RL related variables
   Eigen::VectorXd q_rl;
   Eigen::VectorXd q_zero;               // Reference joint positions
+  
+  Eigen::VectorXd currentObservation;
+  Eigen::VectorXd currentAction; // Raw output from the policy
+  Eigen::VectorXd currentActionScaled; // Scaled action after applying actionScale, share the same size as q_rl, for the joints that are not controlled by the policy the value is 0 in currentActionScaled.
 
-  double actionScale;
+  Eigen::VectorXd actionScale;
   double policyStepSize; // Time interval between policy updates in seconds
 
   size_t currentPolicyIndex = 0;
   std::unique_ptr<RLPolicyInterface> rlPolicy;
   utils utilsClass; // Utility functions for RL controller
 
-  std::string controlFrameName = "tool_frame";
+  std::string controlFrameName = "racquet_frame";
+
+  Eigen::Vector6d plateWeightEffect;
 
   // observation data - Policy specific
-  Eigen::VectorXd jointPos, jointVel;
-  Eigen::Vector3d eePos, eeVel; // Position and velocity of the end-effector
-  Eigen::Vector6d eeWrench; // Wrench at the end-effector (force and torque)
 
-  Eigen::VectorXd currentObservation;
-  Eigen::VectorXd currentAction;
+  // // Old policy observation
+  // Eigen::VectorXd jointPos;
+  // Eigen::VectorXd jointVel;
+
+  // Eigen::Vector3d eePos;
+  // Eigen::Vector3d eeVel;
+  // Eigen::Vector6d eeWrench;
+
+  // observation
+  static constexpr int HISTORY_SIZE = 5; // Number of past time steps to include in the observation
+  std::array<Eigen::VectorXd, HISTORY_SIZE> jointPos, jointVel, jointAction;
+  std::array<Eigen::Vector3d, HISTORY_SIZE> eePos, eeLinVel, eeAngVel;
+  std::array<Eigen::Vector4d, HISTORY_SIZE> eeQuat;
+  std::array<Eigen::Vector6d, HISTORY_SIZE> eeWrench;
 
 private:
   mc_rtc::Configuration config_;
@@ -54,6 +71,8 @@ private:
 
   bool manageModeSwitching(); // Handle switching between Torque and Position control modes
   bool byPassQPControl(); // Directly use RL output without QP modifications
+
+  Eigen::Vector6d sensorBias_;
 
   std::string robotName_;
   std::vector<std::string> jointNames_;

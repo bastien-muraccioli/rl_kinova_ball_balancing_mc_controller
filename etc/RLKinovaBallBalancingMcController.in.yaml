@@ -28,10 +28,16 @@ collisions:
 
 ObserverPipelines:
 - name: Pipeline
+  gui: true
+  log: true
   observers:
     - type: Encoder
-      config:
-        velocity: encoderVelocities
+      velocity: encoderVelocities
+    - type: ExternalForcesObserver
+      is_active: false
+      estimation_method: MomentumObserver    # MomentumObserver, ForceSensorBased
+      torque_source_type: JointTorqueMeasurement
+      residual_gain: 30.0
 
 
 # Implement some additional text states
@@ -44,16 +50,25 @@ transitions:
 # Initial state
 init: RLKinovaBallBalancingMcController_Initial
 
-policy_path: ["v0-2026-04-09.onnx"]  # Path to the RL policy file(s)
+policy_path: ["model_1800.onnx"]  # Path to the RL policy file(s)
 default_policy_index: 0 # Index of the default policy to use
 policies:
-  # index 0 :
+    # index 0 :
   - is_torque_control: true
     use_QP: true
-    action_scale: 0.13
     policy_step_size: 0.01 # Policy step size in seconds
     physics_step_size: 0.001 # Physics step size in seconds
     pd_gains_ratio: 1.0
+
+    action_scale: 
+      joint_1: 0.59375
+      joint_2: 0.59375
+      joint_3: 0.59375
+      joint_4: 0.59375
+      joint_5: 0.75
+      joint_6: 0.75
+      joint_7: 0.75
+
     kp:
       joint_1: 40.0
       joint_2: 40.0
