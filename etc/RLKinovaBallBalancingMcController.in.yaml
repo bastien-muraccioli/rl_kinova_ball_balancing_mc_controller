@@ -34,23 +34,34 @@ ObserverPipelines:
     - type: Encoder
       velocity: encoderVelocities
     - type: ExternalForcesObserver
-      is_active: false
-      estimation_method: MomentumObserver    # MomentumObserver, ForceSensorBased
-      torque_source_type: JointTorqueMeasurement
-      residual_gain: 30.0
+      # estimation_method: MomentumObserver    # MomentumObserver, ForceSensorBased
+      # torque_source_type: JointTorqueMeasurement
+      # residual_gain: 30.0
+      estimation_method: MomentumObserver # or ForceSensorBased
+      is_active: true                  # false = estimate and log only, no feedback to QP
+      use_forces_from_ft_sensors: false # include FT sensor wrenches in the estimate
+      # MomentumObserver-only keys:
+      residual_gain: 10.0              # observer gain K; higher = faster response, more noise
+      torque_source_type: CommandedTorque  # JointTorqueMeasurement preferred when available
 
 
 # Implement some additional text states
 states: {}
 # Transitions map
 transitions:
-- [RLKinovaBallBalancingMcController_Initial, OK, RLKinovaBallBalancingMcController_Initial, Strict]
-- [RLKinovaBallBalancingMcController_Initial, Start, RLKinovaBallBalancingMcController_RL, Strict]
+- [RLKinovaBallBalancingMcController_Initial, RLWithoutQP, RLKinovaBallBalancingMcController_RLWithoutQP, Strict]
+- [RLKinovaBallBalancingMcController_RLWithoutQP, OK, RLKinovaBallBalancingMcController_Initial, Strict]
+- [RLKinovaBallBalancingMcController_Initial, RL, RLKinovaBallBalancingMcController_RL, Strict]
 - [RLKinovaBallBalancingMcController_RL, OK, RLKinovaBallBalancingMcController_Initial, Strict]
+- [RLKinovaBallBalancingMcController_Initial, WrenchTask, RLKinovaBallBalancingMcController_WrenchTask, Strict]
+- [RLKinovaBallBalancingMcController_WrenchTask, OK, RLKinovaBallBalancingMcController_Initial, Strict]
+- [RLKinovaBallBalancingMcController_Initial, WrenchTaskNS, RLKinovaBallBalancingMcController_WrenchTaskNS, Strict]
+- [RLKinovaBallBalancingMcController_WrenchTaskNS, OK, RLKinovaBallBalancingMcController_Initial, Strict]
 # Initial state
 init: RLKinovaBallBalancingMcController_Initial
+# init: RLKinovaBallBalancingMcController_RLWithoutQP
 
-policy_path: ["model_1800.onnx"]  # Path to the RL policy file(s)
+policy_path: ["noCalibButWork.onnx"]  # Path to the RL policy file(s)
 default_policy_index: 0 # Index of the default policy to use
 policies:
     # index 0 :
@@ -60,7 +71,7 @@ policies:
     physics_step_size: 0.001 # Physics step size in seconds
     pd_gains_ratio: 1.0
 
-    action_scale: 
+    action_scale:
       joint_1: 0.59375
       joint_2: 0.59375
       joint_3: 0.59375
@@ -86,7 +97,7 @@ policies:
       joint_5: 8.5
       joint_6: 8.5
       joint_7: 8.5
-    
+
     q0:
       joint_1: 0.0
       joint_2: 0.2618

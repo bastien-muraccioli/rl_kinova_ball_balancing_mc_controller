@@ -3,6 +3,9 @@
 #include <mc_control/fsm/Controller.h>
 #include <mc_tasks/TorqueJointTask.h>
 
+#include <mc_tasks/CompliantPostureTask.h>
+#include <mc_tasks/WrenchTask.h>
+
 #include "api.h"
 
 #include "RLPolicyInterface.h"
@@ -17,19 +20,28 @@ struct RLKinovaBallBalancingMcController_DLLAPI RLKinovaBallBalancingMcControlle
   bool run() override;
   void reset(const mc_control::ControllerResetData & reset_data) override;
   void initializeRLObservation();
+  void wrenchTaskUpdate();
 
   // Task
   std::shared_ptr<mc_tasks::TorqueJointTask> torqueJointTask;
-  
+  std::shared_ptr<mc_tasks::CompliantPostureTask> compliantPostureTask;
+  const std::map<std::string, std::vector<double>> posture_init_default = {
+      {"joint_1", {0}}, {"joint_2", {0.262}}, {"joint_3", {3.14}}, {"joint_4", {-2.269}},
+      {"joint_5", {0}}, {"joint_6", {0.96}},  {"joint_7", {1.57}}};
+  std::shared_ptr<mc_tasks::WrenchTask> wrenchTask;
+  sva::ForceVecd wrenchTask_target;
+
   int dofNumber = 0;
 
   // Public RL related variables
   Eigen::VectorXd q_rl;
-  Eigen::VectorXd q_zero;               // Reference joint positions
-  
+  Eigen::VectorXd q_zero; // Reference joint positions
+
   Eigen::VectorXd currentObservation;
   Eigen::VectorXd currentAction; // Raw output from the policy
-  Eigen::VectorXd currentActionScaled; // Scaled action after applying actionScale, share the same size as q_rl, for the joints that are not controlled by the policy the value is 0 in currentActionScaled.
+  Eigen::VectorXd
+      currentActionScaled; // Scaled action after applying actionScale, share the same size as q_rl, for the joints that
+                           // are not controlled by the policy the value is 0 in currentActionScaled.
 
   Eigen::VectorXd actionScale;
   double policyStepSize; // Time interval between policy updates in seconds
@@ -40,17 +52,7 @@ struct RLKinovaBallBalancingMcController_DLLAPI RLKinovaBallBalancingMcControlle
 
   std::string controlFrameName = "racquet_frame";
 
-  Eigen::Vector6d plateWeightEffect;
-
-  // observation data - Policy specific
-
-  // // Old policy observation
-  // Eigen::VectorXd jointPos;
-  // Eigen::VectorXd jointVel;
-
-  // Eigen::Vector3d eePos;
-  // Eigen::Vector3d eeVel;
-  // Eigen::Vector6d eeWrench;
+  bool useQP = true;
 
   // observation
   static constexpr int HISTORY_SIZE = 5; // Number of past time steps to include in the observation
@@ -67,18 +69,15 @@ private:
   void initializeRobot();
   void configRL();
   void initializeRLPolicy();
-  void switchPolicy(int policyIndex);  // Switch to a different policy at runtime
+  void switchPolicy(int policyIndex); // Switch to a different policy at runtime
 
   bool manageModeSwitching(); // Handle switching between Torque and Position control modes
   bool byPassQPControl(); // Directly use RL output without QP modifications
-
-  Eigen::Vector6d sensorBias_;
 
   std::string robotName_;
   std::vector<std::string> jointNames_;
 
   // Mode switching
-  bool useQP_ = true;
   bool isTorqueControl_ = false;
   bool controlModeChanged_ = false;
 
@@ -89,10 +88,12 @@ private:
 
   // Gains
   double pdGainsRatio_ = 1.0;
-  Eigen::VectorXd kp_;  // Gains set to the robot/simulator = pd_gains_ratio * kp_base
-  Eigen::VectorXd kd_;  // Gains set to the robot/simulator = pd_gains_ratio * kd_base
+  Eigen::VectorXd kp_; // Gains set to the robot/simulator = pd_gains_ratio * kp_base
+  Eigen::VectorXd kd_; // Gains set to the robot/simulator = pd_gains_ratio * kd_base
   Eigen::VectorXd kpBase_; // Base RL PD gains from config
   Eigen::VectorXd kdBase_; // Base RL PD gains from config
+
+  Eigen::VectorXd tau_rl_; // Torque output from the RL policy
 
   // RL
   std::vector<std::string> policyPaths_;
