@@ -1,5 +1,6 @@
 #include "RLKinovaBallBalancingMcController.h"
 
+#include <mc_rtc/gui/Force.h>
 #include <RBDyn/MultiBodyConfig.h>
 #include <Eigen/src/Core/Matrix.h>
 
@@ -35,6 +36,15 @@ RLKinovaBallBalancingMcController::RLKinovaBallBalancingMcController(mc_rbdyn::R
 
 bool RLKinovaBallBalancingMcController::run()
 {
+  // auto & real_robot = realRobot(robots()[0].name());
+  // auto & ft_sensor = real_robot.forceSensor("EEForceSensor");
+  // Reconstruct the calib file path the same way Robot's constructor does
+  // std::filesystem::path calib_file =
+  //     std::filesystem::path(robot().module().calib_dir) / std::string("calib_data." + ft_sensor.name());
+  // mc_rtc::log::info("[RLKinovaBallBalancingMcController] FT sensor calib file: {}", calib_file.string());
+
+  wrenchTaskUpdate();
+
   bool run = manageModeSwitching();
   if(byPassQPControl()) // Run RL without taking the QP into account
   {
@@ -114,10 +124,19 @@ void RLKinovaBallBalancingMcController::initializeRobot()
   torqueJointTask->setStiffness(kp_);
   torqueJointTask->setDamping(kd_);
 
-  wrenchTask = std::make_shared<mc_tasks::WrenchTask>(controlFrameName, robots(), robot().robotIndex(), 500.0);
+  // Print all frame names:
+  mc_rtc::log::info("[RLKinovaBallBalancingMcController] Robot frames:");
+  for(const auto & frame : robot().frames())
+  {
+    mc_rtc::log::info("  - {}", frame);
+  }
+  std::string tool_frame = "FT_sensor_mounting";
+  wrenchTask = std::make_shared<mc_tasks::WrenchTask>(tool_frame, robots(), robot().robotIndex(), 500.0);
   wrenchTask_target = sva::ForceVecd::Zero();
 
   compliantPostureTask = std::make_shared<mc_tasks::CompliantPostureTask>(solver(), robot().robotIndex(), 1, 1);
+  torqueCartesianTask_test =
+      std::make_shared<mc_tasks::TorqueCartesianTask_test>(solver(), tool_frame, robot().robotIndex(), 0.0, 500.0);
 }
 
 void RLKinovaBallBalancingMcController::initializeRLPolicy()
@@ -180,8 +199,8 @@ void RLKinovaBallBalancingMcController::initializeRLObservation()
   Eigen::Quaterniond quat = Eigen::Quaterniond(eePosW.rotation().transpose()).normalized();
   eeCurrentOrientation << quat.w(), quat.x(), quat.y(), quat.z();
 
-  // sva::ForceVecd wrench = real_robot.forceSensor("EEForceSensor").wrenchWithoutGravity(real_robot);
-  sva::ForceVecd wrench = real_robot.forceSensor("EEForceSensor").wrench();
+  sva::ForceVecd wrench = real_robot.forceSensor("EEForceSensor").wrenchWithoutGravity(real_robot);
+  // sva::ForceVecd wrench = real_robot.forceSensor("EEForceSensor").wrench();
   Eigen::Vector6d eeCurrentWrench = Eigen::Vector6d::Zero();
   eeCurrentWrench.head<3>() = wrench.force();
   eeCurrentWrench.tail<3>() = wrench.couple();
@@ -197,14 +216,14 @@ void RLKinovaBallBalancingMcController::initializeRLObservation()
   eeAngVel[0] = eeCurrentAngularVel;
   eeWrench[0] = eeCurrentWrench;
 
-  mc_rtc::log::info("jointPos[0]: {}", jointPos[0].transpose());
-  mc_rtc::log::info("jointVel[0]: {}", jointVel[0].transpose());
-  mc_rtc::log::info("jointAction[0]: {}", jointAction[0].transpose());
-  mc_rtc::log::info("eePos[0]: {}", eePos[0].transpose());
-  mc_rtc::log::info("eeQuat[0]: {}", eeQuat[0].transpose());
-  mc_rtc::log::info("eeLinVel[0]: {}", eeLinVel[0].transpose());
-  mc_rtc::log::info("eeAngVel[0]: {}", eeAngVel[0].transpose());
-  mc_rtc::log::info("eeWrench[0]: {}", eeWrench[0].transpose());
+  // mc_rtc::log::info("jointPos[0]: {}", jointPos[0].transpose());
+  // mc_rtc::log::info("jointVel[0]: {}", jointVel[0].transpose());
+  // mc_rtc::log::info("jointAction[0]: {}", jointAction[0].transpose());
+  // mc_rtc::log::info("eePos[0]: {}", eePos[0].transpose());
+  // mc_rtc::log::info("eeQuat[0]: {}", eeQuat[0].transpose());
+  // mc_rtc::log::info("eeLinVel[0]: {}", eeLinVel[0].transpose());
+  // mc_rtc::log::info("eeAngVel[0]: {}", eeAngVel[0].transpose());
+  // mc_rtc::log::info("eeWrench[0]: {}", eeWrench[0].transpose());
 }
 
 void RLKinovaBallBalancingMcController::switchPolicy(int policyIndex)
@@ -306,6 +325,7 @@ void RLKinovaBallBalancingMcController::addLog()
                        [this]() { return currentObservation; });
   logger().addLogEntry("RLKinovaBallBalancingMcController_RL_currentAction", [this]() { return currentAction; });
   logger().addLogEntry("RLKinovaBallBalancingMcController_RL_tau", [this]() { return tau_rl_; });
+  logger().addLogEntry("RLKinovaBallBalancingMcController_tau_d", [this]() { return tau_d; });
 
   // Controller state variables
   logger().addLogEntry("RLKinovaBallBalancingMcController_useQP", [this]() { return useQP; });
@@ -367,6 +387,19 @@ void RLKinovaBallBalancingMcController::addGui()
                         },
                         0.0, 2.0),
                     mc_rtc::gui::Label("Current kp", kp_), mc_rtc::gui::Label("Current kd", kd_));
+
+  // Add FT sensor wrench display
+  auto & real_robot = realRobot(robots()[0].name());
+  auto & ft_sensor = real_robot.forceSensor("EEForceSensor");
+
+  gui()->addElement({"RLKinovaBallBalancingMcController", ft_sensor.name()},
+                    mc_rtc::gui::Force(
+                        ft_sensor.name() + " Gravity compensated",
+                        [&ft_sensor, &real_robot]() { return ft_sensor.wrenchWithoutGravity(real_robot); },
+                        [&ft_sensor, &real_robot]() { return real_robot.bodyPosW(ft_sensor.parent()); }),
+                    mc_rtc::gui::Force(
+                        ft_sensor.name() + "Raw", [&ft_sensor, &real_robot]() { return ft_sensor.wrench(); },
+                        [&ft_sensor, &real_robot]() { return real_robot.bodyPosW(ft_sensor.parent()); }));
 
   gui()->addElement({"ControlMode"},
                     mc_rtc::gui::Button("Switch Control Mode",
@@ -446,7 +479,7 @@ bool RLKinovaBallBalancingMcController::manageModeSwitching()
 void RLKinovaBallBalancingMcController::wrenchTaskUpdate()
 {
   auto & real_robot = realRobot(robots()[0].name());
-  Eigen::VectorXd tau_d = Eigen::VectorXd::Zero(dofNumber);
+  tau_d = Eigen::VectorXd::Zero(dofNumber);
   int i = 0;
   for(const auto & joint_name : jointNames_)
   {
@@ -455,6 +488,6 @@ void RLKinovaBallBalancingMcController::wrenchTaskUpdate()
     tau_d(i) = kp_(i) * (q_rl(i) - q) - kd_(i) * q_dot;
     i++;
   }
-  Eigen::VectorXd wrenchVec = wrenchTask->dynamicJacobianTranspose() * tau_d;
+  Eigen::Vector6d wrenchVec = wrenchTask->dynamicJacobianTranspose() * tau_d;
   wrenchTask_target = sva::ForceVecd(wrenchVec.head<3>(), wrenchVec.tail<3>());
 }

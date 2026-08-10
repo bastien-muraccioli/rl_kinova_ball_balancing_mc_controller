@@ -1,10 +1,13 @@
 #pragma once
 
 #include <mc_control/fsm/Controller.h>
-#include <mc_tasks/TorqueJointTask.h>
 
 #include <mc_tasks/CompliantPostureTask.h>
+#include <mc_tasks/TorqueCartesianTask_test.h>
+#include <mc_tasks/TorqueJointTask.h>
 #include <mc_tasks/WrenchTask.h>
+
+#include <SpaceVecAlg/SpaceVecAlg>
 
 #include "api.h"
 
@@ -29,6 +32,7 @@ struct RLKinovaBallBalancingMcController_DLLAPI RLKinovaBallBalancingMcControlle
       {"joint_1", {0}}, {"joint_2", {0.262}}, {"joint_3", {3.14}}, {"joint_4", {-2.269}},
       {"joint_5", {0}}, {"joint_6", {0.96}},  {"joint_7", {1.57}}};
   std::shared_ptr<mc_tasks::WrenchTask> wrenchTask;
+  std::shared_ptr<mc_tasks::TorqueCartesianTask_test> torqueCartesianTask_test;
   sva::ForceVecd wrenchTask_target;
 
   int dofNumber = 0;
@@ -36,6 +40,7 @@ struct RLKinovaBallBalancingMcController_DLLAPI RLKinovaBallBalancingMcControlle
   // Public RL related variables
   Eigen::VectorXd q_rl;
   Eigen::VectorXd q_zero; // Reference joint positions
+  Eigen::VectorXd tau_d;
 
   Eigen::VectorXd currentObservation;
   Eigen::VectorXd currentAction; // Raw output from the policy

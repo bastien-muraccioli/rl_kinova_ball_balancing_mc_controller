@@ -39,7 +39,7 @@ ObserverPipelines:
       # residual_gain: 30.0
       estimation_method: MomentumObserver # or ForceSensorBased
       is_active: true                  # false = estimate and log only, no feedback to QP
-      use_forces_from_ft_sensors: false # include FT sensor wrenches in the estimate
+      use_forces_from_ft_sensors: true # include FT sensor wrenches in the estimate
       # MomentumObserver-only keys:
       residual_gain: 10.0              # observer gain K; higher = faster response, more noise
       torque_source_type: CommandedTorque  # JointTorqueMeasurement preferred when available
@@ -61,7 +61,7 @@ transitions:
 init: RLKinovaBallBalancingMcController_Initial
 # init: RLKinovaBallBalancingMcController_RLWithoutQP
 
-policy_path: ["noCalibButWork.onnx"]  # Path to the RL policy file(s)
+policy_path: ["CalibAnd.onnx"]  # Path to the RL policy file(s)
 default_policy_index: 0 # Index of the default policy to use
 policies:
     # index 0 :
